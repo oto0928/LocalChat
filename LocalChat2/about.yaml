@@ -1,0 +1,174 @@
+
+project:
+  name: LocalChat
+  description: >
+    Swift + MultipeerConnectivity を使用して、インターネット接続なしで
+    近距離の友人とチャットや二人用ゲーム（四目並べ・オセロ）を楽しめるiOSアプリ。
+
+  target_platform: iOS
+  language: Swift
+  ui_framework: SwiftUI
+  communication_framework: MultipeerConnectivity
+  architecture: MVVM
+
+requirements:
+  goals:
+    - オフライン（機内など）でP2P通信が可能
+    - ホストとゲスト間でチャット・ゲームデータをやり取り
+    - 2人で四目並べ・オセロをプレイ可能
+  devices:
+    - iPhone実機2台以上（シミュレータ不可）
+  ios_version: "16以上推奨"
+
+structure:
+  layers:
+    - UI: SwiftUI + ObservableObject
+    - ViewModel: 各画面（ChatViewModel, GameViewModel）
+    - Model: ChatMessage, GameState, Envelope
+    - Communication: MPCManager（MultipeerConnectivityラッパー）
+
+communication:
+  class: MPCManager
+  service_type: "p2p-play"
+  roles:
+    - host: Advertiser（部屋を立てる）
+    - guest: Browser（部屋に入る）
+  methods:
+    - startHosting(): 端末をホストモードで広告
+    - startBrowsing(): 近隣端末を探索
+    - invite(peer): ゲストがホストに接続要求
+    - send(data, reliably): データ送信
+    - disconnect(): 切断
+  callbacks:
+    - onReceiveData(data, fromPeer)
+    - onStateChange()
+
+data_protocol:
+  envelope:
+    kind: [chat, presence, gameMove, gameSync]
+    fields:
+      - chat: ChatMessage
+      - presence: Presence
+      - gameMove: GameMove
+      - gameSync: GameSync
+  structures:
+    ChatMessage:
+      id: UUID
+      sender: String
+      text: String
+      timestamp: Date
+    Presence:
+      displayName: String
+      isHost: Bool
+    GameMove:
+      game: [connect4, reversi]
+      payload: JSONEncodedMove
+    GameSync:
+      game: [connect4, reversi]
+      state: JSONEncodedState
+
+features:
+  chat:
+    description: >
+      テキストメッセージをリアルタイムに送受信。
+      JSONエンコードしたChatMessageをEnvelopeに包んで送信。
+    components:
+      - ChatView
+      - ChatViewModel
+      - ChatMessage
+  games:
+    - name: Connect4
+      description: 四目並べ。6x7マスで縦・横・斜めに4つ揃えると勝ち。
+      model: Connect4State
+      move: Connect4Move(column: Int)
+      rules:
+        - 6行7列の盤面
+        - 一列ずつコマを落とす
+        - 4連続で勝利
+    - name: Reversi
+      description: オセロ。8x8マス、石を挟んで裏返す。
+      model: ReversiState
+      move: Move(r: Int, c: Int, isPass: Bool)
+      rules:
+        - 初期配置あり
+        - 相手を挟むと反転
+        - 両者パス or 盤面満杯で終了
+
+game_sync:
+  method: Host-Authoritative（ホストが盤面の真実を保持）
+  data_flow:
+    - move送信: gameMove（reliable）
+    - state同期: gameSync（reliable）
+  reconnection: ホストが最新盤面を再送（gameSync）
+  conflict_prevention: state.current == myPlayer でターンチェック
+
+ui:
+  layout:
+    - TabView:
+        tabs:
+          - ルーム: RoomView（接続状態・ホスト/ゲスト切替）
+          - チャット: ChatView
+          - ゲーム: GamesView（四目並べ / オセロ）
+  components:
+    RoomView:
+      features:
+        - ホスト開始ボタン
+        - 近くを検索ボタン
+        - 接続中ピア一覧
+    GamesView:
+      features:
+        - 四目並べ起動ボタン
+        - オセロ起動ボタン
+    ChatView:
+      features:
+        - メッセージ一覧
+        - 送信テキストフィールド
+        - 送信ボタン
+
+testing:
+  environment:
+    - 実機2台で検証（シミュレータ不可）
+    - 機内モードでも可（Bluetooth/Wi-Fi使用）
+  checks:
+    - 接続・切断イベント確認
+    - メッセージ送受信
+    - ゲームターン同期
+    - 勝敗判定・再接続同期
+
+security:
+  encryption: encryptionPreference.required
+  personal_info: displayNameのみ（匿名設定推奨）
+  privacy: 外部通信なし、ローカル限定通信
+  permissions:
+    - Bluetooth
+    - Local Network: 不要（MCは自動）
+
+optimization:
+  battery_saving:
+    - 通信停止時はdisconnect()
+    - 画面更新抑制
+  data_transfer:
+    - 画像やファイル転送時はsendResource利用
+  reliability:
+    - チャット/ゲーム状態は.reliable
+    - プレゼンス等は.unreliable
+
+extensions:
+  future_features:
+    - スタンプ・絵文字送信
+    - 観戦モード
+    - 3人以上のメッシュ通信
+    - ルームQR招待
+    - プレイ履歴保存（Core Data）
+    - ゲームリプレイ機能
+
+workflow_summary:
+  steps:
+    - プロジェクト作成（Xcode → SwiftUI）
+    - MPCManager実装
+    - Envelope & ChatMessage構築
+    - ChatViewModel/ChatView作成
+    - Connect4State/Connect4ViewModel構築
+    - ReversiState/Move作成
+    - ゲーム同期（gameMove / gameSync）
+    - 実機テスト＆デバッグ
